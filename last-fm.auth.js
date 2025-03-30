@@ -1,7 +1,6 @@
 require('dotenv').config();
 const axios = require('axios');
 const crypto = require('crypto');
-const qs = require('querystring');
 
 // Configuration
 const config = {
