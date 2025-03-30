@@ -108,10 +108,6 @@ async function main() {
         console.log('Starting Last.fm authentication...');
         const sessionKey = await authenticateLastFM();
         console.log('\nSuccess! Your session key:', sessionKey);
-
-        // Now you can use this sessionKey for scrobbling
-        // Implement your scrobbling logic here
-
     } catch (error) {
         console.error('Fatal error:', error.message);
         process.exit(1);
