@@ -18,7 +18,7 @@ A command-line tool that automatically scrobbles your vinyl records from Discogs
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/vinyl-scrobbler.git
+   git clone https://github.com/nesticle8bit/vinyl-scrobbler
    cd vinyl-scrobbler
 
 2. Install dependencies:
