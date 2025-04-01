@@ -1,42 +1,195 @@
-require('dotenv').config();
-const axios = require('axios');
-const crypto = require('crypto');
-const readline = require('readline');
-const fs = require('fs');
-const path = require('path');
+import 'dotenv/config';
+import axios from 'axios';
+import crypto from 'crypto';
+import readline from 'readline';
+import fs from 'fs';
+import path from 'path';
+import { promisify } from 'util';
+import chalk from 'chalk';
+import { fileURLToPath } from 'url';
+import terminalImage from 'terminal-image';
 
-let DRY_RUN = false;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const writeFile = promisify(fs.writeFile);
+const readFile = promisify(fs.readFile);
+
+// Constants
 const DEFAULT_TRACK_DURATION = 180; // 3 minutes
+const MIN_SCROBBLE_DURATION = 30; // Last.fm minimum
+const REQUIRED_ENV = ['LASTFM_API_KEY', 'LASTFM_API_SECRET', 'LASTFM_USERNAME', 'LASTFM_PASSWORD', 'DISCOGS_USER_TOKEN'];
 
-['LASTFM_API_KEY', 'DISCOGS_USER_TOKEN'].forEach(env => {
-    if (!process.env[env]) throw new Error(`Missing ${env}`);
+// Configuration check
+REQUIRED_ENV.forEach(env => {
+    if (!process.env[env]) {
+        console.error(chalk.red(`\n❌ Missing required environment variable: ${env}`));
+        process.exit(1);
+    }
 });
 
-// Configure API clients
+// API Clients
 const lastfm = axios.create({
-    baseURL: 'https://ws.audioscrobbler.com/2.0/'
+    baseURL: 'https://ws.audioscrobbler.com/2.0/',
+    timeout: 5000
 });
 
 const discogs = axios.create({
     baseURL: 'https://api.discogs.com/',
     headers: {
-        'User-Agent': 'VinylScrobbler/1.0',
+        'User-Agent': 'VinylScrobbler/2.0',
         'Authorization': `Discogs token=${process.env.DISCOGS_USER_TOKEN}`
-    }
+    },
+    timeout: 5000
 });
 
-// User interface setup
+// CLI Interface
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
 });
 
-// Helper functions
+// Helper Functions
 const question = (q) => new Promise(resolve => rl.question(q, resolve));
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Last.fm authentication
-let sessionKey;
+function parseDuration(duration) {
+    if (!duration) return DEFAULT_TRACK_DURATION;
+    const parts = duration.split(':').map(Number).filter(n => !isNaN(n));
+
+    return parts.length === 3 ? // HH:MM:SS
+        parts[0] * 3600 + parts[1] * 60 + parts[2] :
+        parts.length === 2 ? // MM:SS
+            parts[0] * 60 + parts[1] :
+            DEFAULT_TRACK_DURATION;
+}
+
+function formatDuration(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function updateProgress(current, total, duration) {
+    const percent = Math.round((current / total) * 100);
+    const progressBar = '■'.repeat(Math.floor(percent / 5)).padEnd(20, '□');
+
+    readline.cursorTo(process.stdout, 0);
+    process.stdout.write(
+        chalk.green(`🔄 ${current}/${total}`) +
+        chalk.gray(` [${progressBar}] ${percent}%`) +
+        chalk.yellow(` (${formatDuration(duration)})`)
+    );
+}
+
+function parseArgs() {
+    const args = {};
+    process.argv.slice(2).forEach(arg => {
+        if (arg.startsWith('--')) {
+            const [key, value] = arg.replace('--', '').split('=');
+            args[key] = value || true;
+        }
+    });
+    return args;
+}
+
+async function displayImageThumbnail(imageUrl) {
+    try {
+        const thumbnailUrl = imageUrl.replace('/h:600/w:600', '/h:40/w:40').replace('/q:90', '/q:80');
+
+        const { data } = await axios.get(thumbnailUrl, {
+            responseType: 'arraybuffer',
+            headers: {
+                'User-Agent': 'VinylScrobbler/2.0'
+            }
+        });
+
+        console.log(await terminalImage.buffer(Buffer.from(data), {
+            height: 8, preserveAspectRatio: true
+        }));
+    } catch (error) {
+        return;
+    }
+}
+
+async function displayReleaseSummary(data) {
+    const artist = data.artists?.[0]?.name || 'Unknown Artist';
+    const album = data.title || 'Unknown Album';
+    const year = data.year || 'Unknown Year';
+    const genres = data.genres?.join(', ') || 'Not specified';
+    const styles = data.styles?.join(', ') || 'Not specified';
+    const labels = data.labels?.map(l => `${l.name} (${l.catno})`).join(', ') || 'Unknown';
+    const trackCount = data.tracklist?.filter(t => t.type_ === 'track').length || 0;
+
+    // Create header with album art if available
+    let header = chalk.bold.hex('#FFA500').underline(`${artist} - ${album} (${year})`);
+
+    const border = chalk.gray('┌' + '─'.repeat(50) + '┐');
+    console.log(border);
+
+    if (data.images?.length > 0) {
+        const thumbUrl = data?.images[0]?.uri150; // 150x150 thumbnail
+
+        if (thumbUrl) {
+            await displayImageThumbnail(thumbUrl);
+        }
+    }
+
+    const summary = `${header}
+
+${chalk.bold.green('🎙️\u00A0 Basic Info:')}
+    ${chalk.bold('Genres:')}    ${chalk.cyan(genres)}
+    ${chalk.bold('Styles:')}    ${chalk.cyan(styles)}
+    ${chalk.bold('Country:')}   ${chalk.cyan(data.country)}
+    ${chalk.bold('Released:')}  ${chalk.cyan(data.released_formatted)}
+    ${chalk.bold('Tracks:')}    ${chalk.yellow(trackCount)} tracks
+
+${chalk.bold.green('🗡️\u00A0 Label Info:')}
+    ${labels}
+
+${chalk.bold.green('💿 Format:')}
+    ${data.formats?.map(f =>
+        `${chalk.bold(f.name)} x${f.qty} (${f.descriptions?.join(', ') || 'No description'})`
+    ).join('\n  ') || 'Unknown format'}
+
+${chalk.dim('Discogs URL:')} ${chalk.blue.underline(data.uri)}
+`;
+
+    console.log(summary);
+    console.log(chalk.gray('└' + '─'.repeat(50) + '┘'));
+}
+
+async function getDiscogsInfo(url) {
+    try {
+        const releaseId = url.match(/\d+/)[0];
+        const { data } = await discogs.get(`/releases/${releaseId}`);
+
+        await displayReleaseSummary(data);
+
+        const artist = data.artists?.[0]?.name || 'Unknown Artist';
+        const album = data.title || 'Unknown Album';
+
+        const tracks = (data.tracklist || [])
+            .filter(t => t.type_ === 'track')
+            .map(t => ({
+                position: t.position || '',
+                title: t.title || 'Untitled Track',
+                duration: t.duration || '',
+                type_: t.type_ || 'track'
+            }));
+
+        const value = {
+            artist,
+            album,
+            tracks
+        };
+
+        return value;
+    } catch (error) {
+        console.error(chalk.red(`\n⚠️ Discogs error: ${error.response?.data || error.message}`));
+        process.exit(1);
+    }
+}
 
 async function authenticateLastFM() {
     try {
@@ -53,64 +206,37 @@ async function authenticateLastFM() {
             .digest('hex');
 
         const { data } = await lastfm.post('', null, { params });
-
         if (data.error) throw new Error(data.message);
-
         return data.session.key;
     } catch (error) {
-        console.error('Auth error:', error.response?.data || error.message);
+        console.error(chalk.red('\n⚠️  Authentication failed:'), error.response?.data || error.message);
         process.exit(1);
     }
 }
 
-// Discogs release parser
-async function getReleaseData(url) {
-    try {
-        const releaseId = url.match(/\d+/)[0];
-        const { data } = await discogs.get(`/releases/${releaseId}`);
-
-        return {
-            artist: data.artists[0].name,
-            album: data.title,
-            tracks: data.tracklist.filter(t => t.type_ === 'track')
-        };
-    } catch (error) {
-        console.error('Discogs error:', error.response?.data || error.message);
-        process.exit(1);
-    }
-}
-
-// Scrobbler function
-async function scrobble(artist, album, tracks) {
-    const now = Math.floor(Date.now() / 1000); // (seconds since Jan 1, 1970 UTC)
+async function scrobble(artist, album, tracks, options = {}) {
+    const now = Math.floor(Date.now() / 1000);
     let cumulativeTime = 0;
 
-    const trackDurations = tracks.map(track => {
-        if (track.duration) {
-            // Parse Discogs duration format (MM:SS or HH:MM:SS)
-            const parts = track.duration.split(':').map(part => parseInt(part));
-            let seconds = 0;
+    // Calculate total duration first
+    const totalDuration = tracks.reduce((sum, track) => {
+        return sum + (parseDuration(track.duration) || DEFAULT_TRACK_DURATION);
+    }, 0);
 
-            if (parts.length === 3) { // HH:MM:SS
-                seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
-            } else if (parts.length === 2) { // MM:SS
-                seconds = parts[0] * 60 + parts[1];
-            } else { // Invalid format, use default
-                seconds = DEFAULT_TRACK_DURATION;
-            }
-
-            return seconds;
-        }
-
-        return DEFAULT_TRACK_DURATION;
-    });
-
-    const totalDuration = trackDurations.reduce((sum, duration) => sum + duration, 0);
-
-    // Scrobble each track with accurate timestamps
     for (let i = 0; i < tracks.length; i++) {
-        const duration = Math.max(trackDurations[i], 30); // Ensure minimum 30-second duration for Last.fm
+        const duration = Math.max(parseDuration(tracks[i].duration), MIN_SCROBBLE_DURATION);
         const timestamp = now - (totalDuration - cumulativeTime);
+
+        // Clear line and print track info
+        readline.clearLine(process.stdout, 0);
+        readline.cursorTo(process.stdout, 0);
+        console.log(chalk.blue(`🎧 ${i + 1}/${tracks.length}:`) + ` ${artist} - ${tracks[i].title}`);
+
+        if (options.dryRun) {
+            await delay(300);
+            cumulativeTime += duration;
+            continue;
+        }
 
         const params = {
             method: 'track.scrobble',
@@ -120,151 +246,142 @@ async function scrobble(artist, album, tracks) {
             album: album,
             duration: duration,
             api_key: process.env.LASTFM_API_KEY,
-            sk: sessionKey,
+            sk: options.sessionKey,
             format: 'json'
         };
-
-        if (DRY_RUN) {
-            console.log(`🎧 (Dry run) Would scrobble: ${artist} - ${tracks[i].title}\n`);
-            await delay(300);
-            continue;
-        }
 
         params.api_sig = crypto.createHash('md5')
             .update(`album${params.album}api_key${params.api_key}artist${params.artist}duration${params.duration}method${params.method}sk${params.sk}timestamp${params.timestamp}track${params.track}${process.env.LASTFM_API_SECRET}`)
             .digest('hex');
 
-        await lastfm.post('', null, { params });
+        try {
+            await lastfm.post('', null, { params });
+            updateProgress(i + 1, tracks.length, duration);
+        } catch (error) {
+            console.error(chalk.red(`\n⚠️  Failed to scrobble "${tracks[i].title}":`), error.response?.data || error.message);
+        }
+
         cumulativeTime += duration;
-
-        process.stdout.write(`🎧 ${i + 1}. ${artist} - ${tracks[i].title}\n`);
-        updateProgress(i + 1, tracks.length);
-
-        await delay(1000); // Respect rate limits
-        process.stdout.write('\n\n');
+        await delay(options.delay || 1000);
     }
 }
 
-function logScrobbleSession(discogsUrl, tracks) {
-    let trackNumber = 1;
+async function logScrobbleSession(discogsUrl, info) {
+    const logDir = path.join(__dirname, 'logs');
+    const logFile = path.join(logDir, `scrobbles_${new Date().toISOString().split('T')[0]}.json`);
 
     const logEntry = {
-        emoji: "💿",
+        timestamp: new Date().toISOString(),
+        artist: info?.artist || 'Unknown',
+        album: info?.album || 'Unknown',
         url: discogsUrl,
-        scrobbled: new Date().toLocaleString('en-GB', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: true
-        }).replace(',', ''),
-        tracklist: tracks.map(t => {
-            return {
-                number: trackNumber++,
-                title: t.title,
-                position: t.position,
-                duration: t.duration ? t.duration : "00:00"
-            };
-        })
+        tracks: info?.tracks.map((t, i) => ({
+            position: i + 1,
+            title: t.title,
+            duration: t.duration || '00:00'
+        }))
     };
 
-    const logFilePath = path.join(__dirname, 'vinyl_scrobble__logs.json');
-    let logData = [];
-
-    // Read existing log if it exists
     try {
-        if (fs.existsSync(logFilePath)) {
-            logData = JSON.parse(fs.readFileSync(logFilePath));
+        if (!fs.existsSync(logDir)) {
+            fs.mkdirSync(logDir, { recursive: true });
         }
-    } catch (err) {
-        console.error('Error reading log file:', err);
-    }
 
-    logData.push(logEntry);
-
-    try {
-        fs.writeFileSync(logFilePath, JSON.stringify(logData, null, 2));
-    } catch (err) {
-        console.error('Error writing to log file:', err);
-    }
-}
-
-function updateProgress(current, total) {
-    readline.cursorTo(process.stdout, 0);
-    const percent = Math.round((current / total) * 100);
-    process.stdout.write(`🔄 ${current}/${total} (${percent}%)...`);
-}
-
-function parseArgs() {
-    const args = {};
-    for (const arg of process.argv.slice(2)) {
-        if (arg.startsWith('--')) {
-            const [key, value] = arg.replace('--', '').split('=');
-            args[key] = value !== undefined ? value : true;
+        let logData = [];
+        if (fs.existsSync(logFile)) {
+            logData = JSON.parse(await readFile(logFile, 'utf8'));
         }
+
+        logData.push(logEntry);
+        await writeFile(logFile, JSON.stringify(logData, null, 2));
+        console.log(chalk.green('\n📝 Session logged to:'), chalk.underline(logFile));
+    } catch (err) {
+        console.error(chalk.red('\n⚠️  Error writing log:'), err.message);
     }
-    return args;
 }
 
-// Main workflow
 async function main() {
+    const args = parseArgs();
+
+    if (args.help || args.h) {
+        console.log(chalk.blue(`
+Vinyl Scrobbler v2.0 - Scrobble vinyl tracks to Last.fm
+
+Usage: node scrobbler.js [options]
+
+Options:
+  --album=ID       Discogs release ID or URL
+  --dry-run        Test without scrobbling
+  --delay=MS       Delay between scrobbles (default: 1000)
+  --help           Show this help
+        `));
+        process.exit(0);
+    }
+
     try {
-        const args = parseArgs();
-        DRY_RUN = args['dry-run'] || false;
+        // Get release URL
+        let discogsUrl;
 
-        const discogsUrl = args.album
-            ? `https://www.discogs.com/release/${args.album}`
-            : await question('\n 🍂 Enter Discogs release URL or ID: ');
+        if (args.album) {
+            discogsUrl = args.album.includes('discogs.com')
+                ? args.album
+                : `https://www.discogs.com/release/${args.album}`;
+        } else {
+            discogsUrl = await question('\n 🍂 Enter Discogs release URL or ID: ');
+        }
 
-        // Extract release ID whether URL or just ID was provided
+        // Extract release ID
         const releaseId = discogsUrl.match(/(?:release\/)?(\d+)/)[1];
         const fullUrl = `https://www.discogs.com/release/${releaseId}`;
 
-        if (DRY_RUN) {
-            console.log('\n🚨 DRY RUN MODE - No tracks will actually be scrobbled');
-        }
+        // Fetch release data
+        console.log(chalk.blue('\n⏳ Fetching release data...'));
+        let { artist, album, tracks } = await getDiscogsInfo(fullUrl);
 
-        console.log('\n⏳ Fetching release data...');
-        let { artist, album, tracks } = await getReleaseData(fullUrl);
-        console.log(`\n🎤 Current Artist: ${artist}`);
-
+        // Artist confirmation
+        console.log(chalk.blue('\n🎤 Current Artist:'), artist);
         rl.write(artist);
         const newArtist = await question('✏️  Edit artist name (press Enter to keep): ');
-
-        // Only update if user modified the default
         if (newArtist && newArtist !== artist) {
             artist = newArtist.trim();
         }
 
-        console.log(`\n✅ ${artist} - ${album}`);
+        // Display tracklist
+        console.log(chalk.green(`\n✅ ${artist} - ${album}`));
         tracks.forEach((t, i) => console.log(`  ${i + 1}. ${t.title}`));
 
-        // Confirm
-        const confirm = await question('\nScrobble these tracks? (y/n): ');
+        // Confirmation
+        const confirm = await question('\nScrobble these tracks? (y/N): ');
         if (confirm.toLowerCase() !== 'y') {
-            console.log('Cancelled.');
+            console.log(chalk.yellow('\n🚫 Cancelled'));
             return;
         }
 
-        // Authenticate
-        console.log('\n🎵🔑 Authenticating with Last.fm...');
-        sessionKey = await authenticateLastFM();
+        // Authentication
+        console.log(chalk.blue('\n🔑 Authenticating with Last.fm...'));
+        const sessionKey = await authenticateLastFM();
 
-        // Scrobble
-        console.log('\n\n🚀 Scrobbling tracks:');
-        await scrobble(artist, album, tracks);
+        // Scrobble tracks
+        console.log(chalk.blue('\n🚀 Scrobbling tracks...\n'));
+        await scrobble(artist, album, tracks, {
+            dryRun: args['dry-run'],
+            delay: args.delay,
+            sessionKey
+        });
 
-        logScrobbleSession(discogsUrl, tracks);
+        // Log session
+        if (!args['dry-run']) {
+            await logScrobbleSession(fullUrl, { artist, album, tracks });
+        }
 
-        console.log(`\n✨ Successfully scrobbled ${tracks.length} tracks from "${album}"!`);
-        console.log(`👉 Check your Last.fm profile: https://www.last.fm/user/${process.env.LASTFM_USERNAME}`);
+        console.log(chalk.green(`\n✨ Successfully scrobbled ${tracks.length} tracks from "${album}"!`));
+        console.log(chalk.blue('👉 Check your profile:'), chalk.underline(`https://www.last.fm/user/${process.env.LASTFM_USERNAME}\n`));
     } catch (error) {
-        console.error('\nError:', error.message);
+        console.error(chalk.red('\n⚠️  Fatal Error:'), error.message);
     } finally {
         rl.close();
     }
 }
 
-// Start the scrobbler
-main();
+// Run the application
+main().catch(console.error);
