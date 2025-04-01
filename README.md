@@ -178,10 +178,11 @@ MIT © Julio Poveda
 
 ----------
 
+
 ## ☕ Support the Project
 
-**Hi, I'm Julio Poveda** – a fullstack developer who crafts robust web symphonies by day and vinyl-scrobbling tools by night.
+***Hi, I'm Julio Poveda** – a fullstack developer who crafts robust web symphonies by day and vinyl-scrobbling tools by night.*
 
-[![Buy Me A Vinyl](https://img.shields.io/badge/%F0%9F%8E%A7-Buy%20Me%20A%20Vinyl-%23FFDD00)](https://www.buymeacoffee.com/nesticle8bit)
+[![Keep my dreams alive](https://img.shields.io/badge/%F0%9F%8E%A7-Keep%20my%20dreams%20alive-%23FFDD00)](https://www.buymeacoffee.com/nesticle8bit)
 
-"Your coffee keeps my IDE open and my turntable spinning!"
+`Your coffee keeps my IDE open and my turntable spinning!`
