@@ -60,7 +60,7 @@ Options:
 
 | Flag         | Description                                    | Example            |
 | ------------ | ---------------------------------------------- | ------------------ |
-| `--album`    | Discogs release ID or URL                      | `--album=18918418` |
+| `--album`    | Discogs release ID or URL                      | `--album=24132131` |
 | `--dry-run`  | Test without scrobbling                        | `--dry-run`        |
 | `--delay=MS` | Delay between scrobbles (default: 1000ms)      | `--delay=2000`     |
 | `--help`     | Show help                                      | `--help`           |
@@ -70,13 +70,13 @@ Options:
 1. Scrobble with release ID:
 
 ```bash
-node vinyl-scrobbler.js --album=18918418
+node vinyl-scrobbler.js --album=24132131
 ```
 
 2. Dry run mode:
 
 ```bash
-node vinyl-scrobbler.js --album=18918418 --dry-run
+node vinyl-scrobbler.js --album=24132131 --dry-run
 ```
 
 3. Interactive mode (prompt for URL):
@@ -93,34 +93,46 @@ Scrobble sessions are saved to:
 Example log entry:
 
 ```json
-{
-    "timestamp": "2025-04-01T16:26:38.342Z",
-    "artist": "Mgła",
-    "album": "Groza",
-    "url": "https://www.discogs.com/release/8493419",
+[
+  {
+    "timestamp": "2025-04-01T19:46:25.040Z",
+    "artist": "Wampyric Rites",
+    "album": "The Eternal Melancholy Of The Wampyre",
+    "url": "https://www.discogs.com/release/24132131",
     "tracks": [
       {
         "position": 1,
-        "title": "I",
-        "duration": "00:00"
+        "title": "Ancient Specters Of The Forlorn Forest",
+        "duration": "5:37"
       },
       {
         "position": 2,
-        "title": "II",
-        "duration": "00:00"
+        "title": "As Light Is Absorbed By Darkness",
+        "duration": "7:42"
       },
       {
         "position": 3,
-        "title": "III",
-        "duration": "00:00"
+        "title": "Tyrant's Blood",
+        "duration": "4:43"
       },
       {
         "position": 4,
-        "title": "IV",
-        "duration": "00:00"
+        "title": "The Eternal Melancholy Of The Wampyre",
+        "duration": "8:12"
+      },
+      {
+        "position": 5,
+        "title": "Grim Funeral Inside The Dusty Dungeons Of Time",
+        "duration": "7:36"
+      },
+      {
+        "position": 6,
+        "title": "Under An Amethyst Sky",
+        "duration": "12:07"
       }
     ]
   }
+]
 ```
 
 ## ✅ Requirements
