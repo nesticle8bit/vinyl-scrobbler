@@ -2,7 +2,7 @@
 
 [![Buy Me A Coffee](https://img.shields.io/badge/buy_me_a_coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/nesticle8bit)
 
-Scrobble vinyl tracks from Discogs to Last.fm with accurate timestamps and metadata.
+Scrobble vinyl tracks from [Discogs](https://www.discogs.com) to [Last.fm](https://www.last.fm) with accurate timestamps and metadata.
 
 [![MIT](https://img.shields.io/badge/license-MIT-blue)](#)
 [![NodeJS](https://img.shields.io/badge/Node.js-6DA55F?logo=node.js&logoColor=white)](#)
@@ -169,14 +169,15 @@ Or rename file to `.mjs` extension
   Verify .env file exists with all required keys
   ```
 
-## Contributing
+## 🫶 Contributing
 
 Contributions are welcome! Please open an issue or submit a pull request for any improvements.
 
 ## 📜 License
 MIT © Julio Poveda
 
-----------
+
+---
 
 
 ## ☕ Support the Project
