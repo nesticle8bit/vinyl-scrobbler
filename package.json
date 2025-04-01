@@ -1,10 +1,37 @@
 {
+    "name": "vinyl-scrobbler",
+    "version": "2.0.0",
     "type": "module",
+    "description": "Scrobble vinyl tracks from Discogs to Last.fm with rich terminal display",
+    "main": "vinyl-scrobbler.js",
+    "engines": {
+        "node": ">=18.0.0"
+    },
     "dependencies": {
-        "axios": "^1.8.4",
-        "chalk": "^5.4.1",
-        "crypto": "^1.0.1",
-        "dotenv": "^16.4.7",
-        "terminal-image": "^3.1.1"
-    }
+        "axios": "1.8.4",
+        "chalk": "5.4.1",
+        "dotenv": "16.4.7",
+        "terminal-image": "3.1.1"
+    },
+    "devDependencies": {
+        "eslint": "^8.57.0",
+        "eslint-config-prettier": "^9.1.0"
+    },
+    "keywords": [
+        "discogs",
+        "lastfm",
+        "vinyl",
+        "scrobbler",
+        "cli"
+    ],
+    "author": "Julio Poveda <nesticle8bit@proton.me>",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/nesticle8bit/vinyl-scrobbler"
+    },
+    "bugs": {
+        "url": "https://github.com/nesticle8bit/vinyl-scrobbler/issues"
+    },
+    "homepage": "https://github.com/nesticle8bit/vinyl-scrobbler#readme"
 }
