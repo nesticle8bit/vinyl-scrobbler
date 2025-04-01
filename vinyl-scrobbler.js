@@ -5,6 +5,13 @@ const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
 
+let DRY_RUN = false;
+const DEFAULT_TRACK_DURATION = 180; // 3 minutes
+
+['LASTFM_API_KEY', 'DISCOGS_USER_TOKEN'].forEach(env => {
+    if (!process.env[env]) throw new Error(`Missing ${env}`);
+});
+
 // Configure API clients
 const lastfm = axios.create({
     baseURL: 'https://ws.audioscrobbler.com/2.0/'
@@ -75,10 +82,9 @@ async function getReleaseData(url) {
 
 // Scrobbler function
 async function scrobble(artist, album, tracks) {
-    const now = Math.floor(Date.now() / 1000);
+    const now = Math.floor(Date.now() / 1000); // (seconds since Jan 1, 1970 UTC)
     let cumulativeTime = 0;
 
-    // First calculate total duration to properly space tracks
     const trackDurations = tracks.map(track => {
         if (track.duration) {
             // Parse Discogs duration format (MM:SS or HH:MM:SS)
@@ -90,18 +96,21 @@ async function scrobble(artist, album, tracks) {
             } else if (parts.length === 2) { // MM:SS
                 seconds = parts[0] * 60 + parts[1];
             } else { // Invalid format, use default
-                seconds = 180; // 3 minutes default
+                seconds = DEFAULT_TRACK_DURATION;
             }
 
             return seconds;
         }
-        return 180; // Default duration if not specified (3 minutes)
+
+        return DEFAULT_TRACK_DURATION;
     });
+
+    const totalDuration = trackDurations.reduce((sum, duration) => sum + duration, 0);
 
     // Scrobble each track with accurate timestamps
     for (let i = 0; i < tracks.length; i++) {
-        const duration = trackDurations[i];
-        const timestamp = now - cumulativeTime;
+        const duration = Math.max(trackDurations[i], 30); // Ensure minimum 30-second duration for Last.fm
+        const timestamp = now - (totalDuration - cumulativeTime);
 
         const params = {
             method: 'track.scrobble',
@@ -109,31 +118,36 @@ async function scrobble(artist, album, tracks) {
             track: tracks[i].title,
             timestamp: timestamp,
             album: album,
-            duration: duration, // Include duration in scrobble
+            duration: duration,
             api_key: process.env.LASTFM_API_KEY,
             sk: sessionKey,
             format: 'json'
         };
+
+        if (DRY_RUN) {
+            console.log(`🎧 (Dry run) Would scrobble: ${artist} - ${tracks[i].title}\n`);
+            await delay(300);
+            continue;
+        }
 
         params.api_sig = crypto.createHash('md5')
             .update(`album${params.album}api_key${params.api_key}artist${params.artist}duration${params.duration}method${params.method}sk${params.sk}timestamp${params.timestamp}track${params.track}${process.env.LASTFM_API_SECRET}`)
             .digest('hex');
 
         await lastfm.post('', null, { params });
-        console.log(`✅ ${i + 1}. ${artist} - ${tracks[i].title} (${formatDuration(duration)})`);
-
         cumulativeTime += duration;
+
+        process.stdout.write(`🎧 ${i + 1}. ${artist} - ${tracks[i].title}\n`);
+        updateProgress(i + 1, tracks.length);
+
         await delay(1000); // Respect rate limits
+        process.stdout.write('\n\n');
     }
 }
 
-function formatDuration(seconds) {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-}
-
 function logScrobbleSession(discogsUrl, tracks) {
+    let trackNumber = 1;
+
     const logEntry = {
         emoji: "💿",
         url: discogsUrl,
@@ -145,10 +159,17 @@ function logScrobbleSession(discogsUrl, tracks) {
             minute: '2-digit',
             hour12: true
         }).replace(',', ''),
-        tracklist: tracks.map(t => t.title)
+        tracklist: tracks.map(t => {
+            return {
+                number: trackNumber++,
+                title: t.title,
+                position: t.position,
+                duration: t.duration ? t.duration : "00:00"
+            };
+        })
     };
 
-    const logFilePath = path.join(__dirname, 'scrobble_log.json');
+    const logFilePath = path.join(__dirname, 'vinyl_scrobble__logs.json');
     let logData = [];
 
     // Read existing log if it exists
@@ -160,39 +181,64 @@ function logScrobbleSession(discogsUrl, tracks) {
         console.error('Error reading log file:', err);
     }
 
-    // Add new entry
     logData.push(logEntry);
 
-    // Write back to file
     try {
         fs.writeFileSync(logFilePath, JSON.stringify(logData, null, 2));
-        console.log('\nScrobble session logged successfully!');
     } catch (err) {
         console.error('Error writing to log file:', err);
     }
 }
 
+function updateProgress(current, total) {
+    readline.cursorTo(process.stdout, 0);
+    const percent = Math.round((current / total) * 100);
+    process.stdout.write(`🔄 ${current}/${total} (${percent}%)...`);
+}
+
+function parseArgs() {
+    const args = {};
+    for (const arg of process.argv.slice(2)) {
+        if (arg.startsWith('--')) {
+            const [key, value] = arg.replace('--', '').split('=');
+            args[key] = value !== undefined ? value : true;
+        }
+    }
+    return args;
+}
+
 // Main workflow
 async function main() {
     try {
-        // Get user input
-        const discogsUrl = await question('Enter Discogs release URL: ');
+        const args = parseArgs();
+        DRY_RUN = args['dry-run'] || false;
 
-        // Fetch data
-        console.log('\nFetching release data...');
-        let { artist, album, tracks } = await getReleaseData(discogsUrl);
+        const discogsUrl = args.album
+            ? `https://www.discogs.com/release/${args.album}`
+            : await question('\n 🍂 Enter Discogs release URL or ID: ');
 
-        // Show and optionally modify artist name
-        console.log(`\nArtist: ${artist}`);
+        // Extract release ID whether URL or just ID was provided
+        const releaseId = discogsUrl.match(/(?:release\/)?(\d+)/)[1];
+        const fullUrl = `https://www.discogs.com/release/${releaseId}`;
 
-        const newArtist = await question('Press Enter to keep or enter corrected artist name: ');
-
-        if (newArtist) {
-            artist = newArtist;
+        if (DRY_RUN) {
+            console.log('\n🚨 DRY RUN MODE - No tracks will actually be scrobbled');
         }
 
-        console.log(`\n${artist} - ${album}`);
-        tracks.forEach((t, i) => console.log(` ${i + 1}. ${t.title}`));
+        console.log('\n⏳ Fetching release data...');
+        let { artist, album, tracks } = await getReleaseData(fullUrl);
+        console.log(`\n🎤 Current Artist: ${artist}`);
+
+        rl.write(artist);
+        const newArtist = await question('✏️  Edit artist name (press Enter to keep): ');
+
+        // Only update if user modified the default
+        if (newArtist && newArtist !== artist) {
+            artist = newArtist.trim();
+        }
+
+        console.log(`\n✅ ${artist} - ${album}`);
+        tracks.forEach((t, i) => console.log(`  ${i + 1}. ${t.title}`));
 
         // Confirm
         const confirm = await question('\nScrobble these tracks? (y/n): ');
@@ -202,17 +248,17 @@ async function main() {
         }
 
         // Authenticate
-        console.log('\nAuthenticating with Last.fm...');
+        console.log('\n🎵🔑 Authenticating with Last.fm...');
         sessionKey = await authenticateLastFM();
 
         // Scrobble
-        console.log('\nScrobbling tracks:');
+        console.log('\n\n🚀 Scrobbling tracks:');
         await scrobble(artist, album, tracks);
 
         logScrobbleSession(discogsUrl, tracks);
 
-        console.log('\n🎵 All tracks scrobbled successfully!');
-
+        console.log(`\n✨ Successfully scrobbled ${tracks.length} tracks from "${album}"!`);
+        console.log(`👉 Check your Last.fm profile: https://www.last.fm/user/${process.env.LASTFM_USERNAME}`);
     } catch (error) {
         console.error('\nError:', error.message);
     } finally {
